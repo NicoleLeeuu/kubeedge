@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	messagepkg "github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"strings"
 	"time"
 
@@ -115,6 +116,9 @@ func dealLifeCycle(context *dtcontext.DTContext, resource string, msg interface{
 		context.State = dtcommon.Connected
 	} else if strings.Compare(connectedInfo, connect.CloudDisconnected) == 0 {
 		context.State = dtcommon.Disconnected
+		message := model.NewMessage("").BuildRouter(messagepkg.SourceNodeConnection, dtcommon.TwinModule,
+			messagepkg.ResourceTypeDeviceMigrate, messagepkg.OperationMigrate).FillBody(dtcommon.Disconnected)
+		beehiveContext.SendToGroup(dtcommon.TwinModule, *message)
 	}
 	return nil
 }

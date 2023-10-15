@@ -112,6 +112,7 @@ func initActionModuleMap() {
 	ActionModuleMap[dtcommon.LifeCycle] = dtcommon.CommModule
 	ActionModuleMap[dtcommon.Confirm] = dtcommon.CommModule
 	ActionModuleMap[dtcommon.MetaDeviceOperation] = dtcommon.DMIModule
+	ActionModuleMap[dtcommon.MetaMapperOperation] = dtcommon.DMIModule
 }
 
 // SyncSqlite sync sqlite
@@ -211,6 +212,14 @@ func classifyMsg(message *dttype.DTMessage) bool {
 			} else {
 				return false
 			}
+		} else if strings.Contains(message.Msg.Router.Resource, "mapper") {
+			if message.Msg.GetOperation() == model.InsertOperation {
+				message.Msg.Router.Source = dtcommon.TwinModule
+				action = dtcommon.SendToCloud
+			}
+		} else if strings.Contains(message.Msg.Router.Resource, "device/connect_successfully") {
+			message.Msg.Router.Source = dtcommon.TwinModule
+			action = dtcommon.SendToCloud
 		} else {
 			identity = splitString[idLoc]
 			loc := strings.Index(topic, identity)
@@ -264,6 +273,8 @@ func classifyMsg(message *dttype.DTMessage) bool {
 		if strings.Compare(message.Msg.Router.Resource, "node/connection") == 0 {
 			message.Action = dtcommon.LifeCycle
 			return true
+		} else if strings.Compare(message.Msg.Router.Resource, "device/migrate") == 0 {
+			message.Action = dtcommon.MetaDeviceOperation
 		}
 		return false
 	} else if strings.Compare(msgSource, "meta") == 0 {
@@ -277,7 +288,12 @@ func classifyMsg(message *dttype.DTMessage) bool {
 			}
 			message.Msg.Content = content
 		}
-		message.Action = dtcommon.MetaDeviceOperation
+		if strings.Contains(message.Msg.Router.Resource, "device") {
+			action = dtcommon.MetaDeviceOperation
+		} else if strings.Contains(message.Msg.Router.Resource, "mapper") {
+			action = dtcommon.MetaMapperOperation
+		}
+		message.Action = action
 		return true
 	}
 	return false

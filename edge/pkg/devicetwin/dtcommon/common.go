@@ -93,6 +93,8 @@ const (
 	Disconnected = "disconnected"
 	// MetaDeviceOperation event
 	MetaDeviceOperation = "MetaDeviceOperation"
+	// MetaMapperOperation event
+	MetaMapperOperation = "MetaMapperOperation"
 
 	// CommModule communicate module
 	CommModule = "CommModule"

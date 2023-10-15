@@ -101,12 +101,40 @@ func (dw DMIWorker) Start() {
 func (dw *DMIWorker) initDMIActionCallBack() {
 	dw.dmiActionCallBack = make(map[string]CallBack)
 	dw.dmiActionCallBack[dtcommon.MetaDeviceOperation] = dw.dealMetaDeviceOperation
+	dw.dmiActionCallBack[dtcommon.MetaMapperOperation] = dw.dealMetaMapperOperation
 }
 
 func (dw *DMIWorker) dealMetaDeviceOperation(context *dtcontext.DTContext, resource string, msg interface{}) error {
 	message, ok := msg.(*model.Message)
 	if !ok {
 		return errors.New("msg not Message type")
+	}
+	if strings.Contains(message.Router.Resource, constants.ResourceTypeDeviceMigrate) {
+		var deviceToRemove []*v1beta1.Device
+		var mapperToRemove []*pb.MapperInfo
+		for _, device := range dw.dmiCache.DeviceList {
+			if device.Spec.MigrateOnOffline == true {
+				deviceToRemove = append(deviceToRemove, device)
+			}
+		}
+		for _, mapper := range dw.dmiCache.MapperList {
+			mapperToRemove = append(mapperToRemove, mapper)
+		}
+		for _, device := range deviceToRemove {
+			err := dmiclient.DMIClientsImp.RemoveDevice(device)
+			if err != nil {
+				klog.Errorf("delete device %s failed with err: %v", device.Name, err)
+				return err
+			}
+			dw.dmiCache.DeviceMu.Lock()
+			delete(dw.dmiCache.DeviceList, device.Name)
+			dw.dmiCache.DeviceMu.Unlock()
+		}
+		for _, mapper := range mapperToRemove {
+			dw.dmiCache.MapperMu.Lock()
+			delete(dw.dmiCache.MapperList, mapper.Name)
+			dw.dmiCache.MapperMu.Unlock()
+		}
 	}
 	resources := strings.Split(message.Router.Resource, "/")
 	if len(resources) != 3 {
@@ -121,6 +149,7 @@ func (dw *DMIWorker) dealMetaDeviceOperation(context *dtcontext.DTContext, resou
 			return fmt.Errorf("invalid message content with err: %+v", err)
 		}
 		switch message.GetOperation() {
+		//TODO 在数据库中修改设备信息
 		case model.InsertOperation:
 			dw.dmiCache.DeviceMu.Lock()
 			dw.dmiCache.DeviceList[device.Name] = &device
@@ -187,7 +216,6 @@ func (dw *DMIWorker) dealMetaDeviceOperation(context *dtcontext.DTContext, resou
 		default:
 			klog.Warningf("unsupported operation %s", message.GetOperation())
 		}
-
 	default:
 		klog.Warningf("unsupported resource type %s", resources[3])
 	}
@@ -253,4 +281,36 @@ func (dw *DMIWorker) initDeviceMapperInfoFromDB() {
 		dw.dmiCache.MapperMu.Unlock()
 	}
 	klog.Infoln("success to init device mapper info from db")
+}
+
+func (dw *DMIWorker) dealMetaMapperOperation(context *dtcontext.DTContext, resource string, msg interface{}) error {
+	message, ok := msg.(*model.Message)
+	if !ok {
+		return errors.New("msg not Message type")
+	}
+	var mapper pb.MapperInfo
+	err := json.Unmarshal(message.Content.([]byte), &mapper)
+	if err != nil {
+		return fmt.Errorf("invalid message content with err: %+v", err)
+	}
+	switch message.GetOperation() {
+	//TODO 在数据库中修改mapper信息
+	case model.InsertOperation:
+		dw.dmiCache.MapperMu.Lock()
+		dw.dmiCache.MapperList[mapper.Name] = &mapper
+		dw.dmiCache.MapperMu.Unlock()
+		//TODO 在DMI中创建mapper
+	case model.DeleteOperation:
+		dw.dmiCache.MapperMu.Lock()
+		delete(dw.dmiCache.MapperList, mapper.Name)
+		dw.dmiCache.MapperMu.Unlock()
+	case model.UpdateOperation:
+		dw.dmiCache.MapperMu.Lock()
+		dw.dmiCache.MapperList[mapper.Name] = &mapper
+		dw.dmiCache.MapperMu.Unlock()
+		//TODO 在DMI中修改mapper
+	default:
+		klog.Warningf("unsupported operation %s", message.GetOperation())
+	}
+	return nil
 }

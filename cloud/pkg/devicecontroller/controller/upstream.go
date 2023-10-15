@@ -19,12 +19,15 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	pb "github.com/kubeedge/kubeedge/pkg/apis/dmi/v1beta1"
 	"strconv"
+	"strings"
 
 	"k8s.io/klog/v2"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
+	commonmodel "github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/common/model"
 	keclient "github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
@@ -54,6 +57,8 @@ type UpstreamController struct {
 	messageLayer messagelayer.MessageLayer
 	// message channel
 	deviceStatusChan chan model.Message
+	// message channel for mapper
+	mapperStatusChan chan model.Message
 
 	// downstream controller to update device status in cache
 	dc *DownstreamController
@@ -64,10 +69,14 @@ func (uc *UpstreamController) Start() error {
 	klog.Info("Start upstream devicecontroller")
 
 	uc.deviceStatusChan = make(chan model.Message, config.Config.Buffer.UpdateDeviceStatus)
+	uc.mapperStatusChan = make(chan model.Message, config.Config.Buffer.UpdateMapperStatus)
 	go uc.dispatchMessage()
 
 	for i := 0; i < int(config.Config.Load.UpdateDeviceStatusWorkers); i++ {
 		go uc.updateDeviceStatus()
+	}
+	for i := 0; i < int(config.Config.Load.UpdateMapperStatusWorkers); i++ {
+		go uc.updateMapperStatus()
 	}
 	return nil
 }
@@ -96,8 +105,12 @@ func (uc *UpstreamController) dispatchMessage() {
 		klog.Infof("Message: %s, resource type is: %s", msg.GetID(), resourceType)
 
 		switch resourceType {
+		case constants.ResourceTypeDeviceConnected:
+		case constants.ResourceTypeDeviceMigrate:
 		case constants.ResourceTypeTwinEdgeUpdated:
 			uc.deviceStatusChan <- msg
+		case constants.ResourceTypeMapper:
+			uc.mapperStatusChan <- msg
 		case constants.ResourceTypeMembershipDetail:
 		default:
 			klog.Warningf("Message: %s, with resource type: %s not intended for device controller", msg.GetID(), resourceType)
@@ -113,6 +126,39 @@ func (uc *UpstreamController) updateDeviceStatus() {
 			return
 		case msg := <-uc.deviceStatusChan:
 			klog.Infof("Message: %s, operation is: %s, and resource is: %s", msg.GetID(), msg.GetOperation(), msg.GetResource())
+			resource := msg.GetResource()
+			if strings.Contains(resource, constants.ResourceTypeDeviceMigrate) {
+				hubInfo := msg.GetContent().(commonmodel.HubInfo)
+				nodeID := hubInfo.NodeID
+				err := uc.dc.mapperMigrated(nodeID)
+				if err != nil {
+					klog.Warningf("Failed to delete mapper record about node %s", nodeID)
+				}
+				err = uc.dc.deviceMigrated(nodeID)
+				if err != nil {
+					klog.Warningf("Failed to migrate devices on node %s", nodeID)
+				}
+				continue
+			} else if strings.Contains(resource, constants.ResourceTypeDeviceConnected) {
+				hubInfo := msg.GetContent().(commonmodel.HubInfo)
+				nodeID := hubInfo.NodeID
+				var deviceName string
+				err := json.Unmarshal(msg.Content.([]byte), &deviceName)
+				if err != nil {
+					klog.Warningf("Failed to unmarshal device name with error %v", err)
+					continue
+				}
+				value, ok := uc.dc.deviceManager.DeployedDevice.Load(deviceName)
+				if !ok {
+					klog.Warningf("Device %s does not exist in DeployedDevice map", deviceName)
+					continue
+				} else {
+					device := value.(*v1beta1.Device)
+					device.Status.CurrentNode = nodeID
+					uc.dc.deviceManager.DeployedDevice.Store(deviceName, device)
+				}
+				continue
+			}
 			msgTwin, err := uc.unmarshalDeviceStatusMessage(msg)
 			if err != nil {
 				klog.Warningf("Unmarshall failed due to error %v", err)
@@ -173,7 +219,7 @@ func (uc *UpstreamController) updateDeviceStatus() {
 				klog.Warningf("Message: %s process failure, get node id failed with error: %s", msg.GetID(), err)
 				continue
 			}
-			resource, err := messagelayer.BuildResourceForDevice(nodeID, "twin", "")
+			resource, err = messagelayer.BuildResourceForDevice(nodeID, "twin", "")
 			if err != nil {
 				klog.Warningf("Message: %s process failure, build message resource failed with error: %s", msg.GetID(), err)
 				continue
@@ -188,6 +234,59 @@ func (uc *UpstreamController) updateDeviceStatus() {
 			klog.Infof("Message: %s process successfully", msg.GetID())
 		}
 	}
+}
+
+func (uc *UpstreamController) updateMapperStatus() {
+	for {
+		select {
+		case <-beehiveContext.Done():
+			klog.Info("Stop updateMapperStatus")
+			return
+		case msg := <-uc.mapperStatusChan:
+			klog.Infof("Message: %s, operation is: %s, and resource is: %s", msg.GetID(), msg.GetOperation(), msg.GetResource())
+			operation := msg.GetOperation()
+			switch operation {
+			case model.InsertOperation:
+				err := uc.registerMapper(msg)
+				if err != nil {
+					klog.Warningf("Mapper registration failed due to error %v", err)
+					continue
+				}
+			default:
+				klog.Info("Unsupported operation")
+			}
+		}
+	}
+}
+
+// registerMapper store mapper record in mapper2NodeMap and deploy device whose mapperRef equals to mapperName to node
+func (uc *UpstreamController) registerMapper(msg model.Message) error {
+	nodeID, err := messagelayer.GetNodeID(msg)
+	if err != nil {
+		klog.Warning("Failed to get node id")
+		return err
+	}
+	mapperInfo := msg.Content.(pb.MapperInfo)
+	uc.dc.mapperManager.Mapper2NodeMap.Store(mapperInfo.Name, nodeID)
+
+	value, ok := uc.dc.mapperManager.NodeMapperList.Load(nodeID)
+	if ok {
+		mapperList := *(value.(*[]pb.MapperInfo))
+		mapperList = append(mapperList, mapperInfo)
+		uc.dc.mapperManager.NodeMapperList.Store(nodeID, &mapperList)
+
+	} else {
+		mapperList := make([]pb.MapperInfo, 0)
+		mapperList = append(mapperList, mapperInfo)
+		uc.dc.mapperManager.NodeMapperList.Store(nodeID, &mapperList)
+	}
+
+	err = uc.dc.deviceDeployed(mapperInfo.Name)
+	if err != nil {
+		klog.Warning("Failed to deployed device whose mapperRef is %s to %s", mapperInfo.Name, nodeID)
+		return err
+	}
+	return nil
 }
 
 func (uc *UpstreamController) unmarshalDeviceStatusMessage(msg model.Message) (*types.DeviceTwinUpdate, error) {

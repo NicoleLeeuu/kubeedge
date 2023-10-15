@@ -17,10 +17,11 @@ limitations under the License.
 package controller
 
 import (
+	"encoding/json"
+	pb "github.com/kubeedge/kubeedge/pkg/apis/dmi/v1beta1"
 	"reflect"
 	"time"
 
-	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -45,6 +46,7 @@ type DownstreamController struct {
 
 	deviceManager      *manager.DeviceManager
 	deviceModelManager *manager.DeviceModelManager
+	mapperManager      *manager.MapperManager
 }
 
 // syncDeviceModel is used to get events from informer
@@ -121,24 +123,43 @@ func (dc *DownstreamController) syncDevice() {
 
 // deviceAdded creates a device, adds in deviceManagers map, send a message to edge node if node selector is present.
 func (dc *DownstreamController) deviceAdded(device *v1beta1.Device) {
-	dc.deviceManager.Device.Store(device.Name, device)
+	dc.deviceManager.UndeployedDevice.Store(device.Name, device)
+
+	var nodeID = ""
 	if device.Spec.NodeName != "" {
-		edgeDevice := createDevice(device)
+		nodeID = device.Spec.NodeName
+	} else {
+		value, ok := dc.mapperManager.Mapper2NodeMap.Load(device.Spec.MapperRef.Name)
+		if ok {
+			nodeID = value.(string)
+			device.Spec.NodeName = nodeID
+		}
+	}
+
+	if nodeID != "" {
+		dc.deviceManager.DeployedDevice.Store(device.Name, device)
+		dc.deviceManager.UndeployedDevice.Delete(device.Name)
+
+		value, ok := dc.deviceManager.NodeDeviceList.Load(nodeID)
+		if ok {
+			deviceList := *(value.(*[]string))
+			deviceList = append(deviceList, device.Name)
+			dc.deviceManager.NodeDeviceList.Store(nodeID, &deviceList)
+		} else {
+			deviceList := make([]string, 0)
+			deviceList = append(deviceList, device.Name)
+			dc.deviceManager.NodeDeviceList.Store(nodeID, &deviceList)
+		}
+
 		msg := model.NewMessage("")
 
-		resource, err := messagelayer.BuildResourceForDevice(device.Spec.NodeName, "membership", "")
+		resource, err := messagelayer.BuildResourceForDevice(nodeID, "device", "")
 		if err != nil {
 			klog.Warningf("Built message resource failed with error: %s", err)
 			return
 		}
-		msg.BuildRouter(modules.DeviceControllerModuleName, constants.GroupTwin, resource, model.UpdateOperation)
-
-		content := types.MembershipUpdate{AddDevices: []types.Device{
-			edgeDevice,
-		}}
-		content.EventID = uuid.New().String()
-		content.Timestamp = time.Now().UnixNano() / 1e6
-		msg.Content = content
+		msg.BuildRouter("meta", constants.GroupTwin, resource, model.InsertOperation)
+		msg.Content, _ = json.Marshal(*device)
 
 		err = dc.messageLayer.Send(*msg)
 		if err != nil {
@@ -170,8 +191,8 @@ func createDevice(device *v1beta1.Device) types.Device {
 // If NodeName is updated, call add device for newNode, deleteDevice for old Node.
 // If Spec is updated, send update message to edge
 func (dc *DownstreamController) deviceUpdated(device *v1beta1.Device) {
-	value, ok := dc.deviceManager.Device.Load(device.Name)
-	dc.deviceManager.Device.Store(device.Name, device)
+	value, ok := dc.deviceManager.DeployedDevice.Load(device.Name)
+	dc.deviceManager.DeployedDevice.Store(device.Name, device)
 	if ok {
 		cachedDevice := value.(*v1beta1.Device)
 		if isDeviceUpdated(cachedDevice, device) {
@@ -206,21 +227,24 @@ func isDeviceUpdated(oldTwin *v1beta1.Device, newTwin *v1beta1.Device) bool {
 
 // deviceDeleted send a deleted message to the edgeNode and deletes the device from the deviceManager.Device map
 func (dc *DownstreamController) deviceDeleted(device *v1beta1.Device) {
-	dc.deviceManager.Device.Delete(device.Name)
+	var nodeID = ""
+	if device.Status.CurrentNode != "" {
+		nodeID = device.Status.CurrentNode
+		dc.deviceManager.DeployedDevice.Delete(device.Name)
+	} else if device.Spec.NodeName != "" {
+		nodeID = device.Spec.NodeName
+		dc.deviceManager.DeployedDevice.Delete(device.Name)
+	} else {
+		dc.deviceManager.UndeployedDevice.Delete(device.Name)
+	}
 
-	if device.Spec.NodeName != "" {
-		edgeDevice := createDevice(device)
+	if nodeID != "" {
 		msg := model.NewMessage("")
 
-		resource, err := messagelayer.BuildResourceForDevice(device.Spec.NodeName, "membership", "")
-		msg.BuildRouter(modules.DeviceControllerModuleName, constants.GroupTwin, resource, model.UpdateOperation)
+		resource, err := messagelayer.BuildResourceForDevice(nodeID, "device", "")
+		msg.BuildRouter("meta", constants.GroupTwin, resource, model.DeleteOperation)
 
-		content := types.MembershipUpdate{RemoveDevices: []types.Device{
-			edgeDevice,
-		}}
-		content.EventID = uuid.New().String()
-		content.Timestamp = time.Now().UnixNano() / 1e6
-		msg.Content = content
+		msg.Content, _ = json.Marshal(*device)
 		if err != nil {
 			klog.Warningf("Built message resource failed with error: %s", err)
 			return
@@ -323,6 +347,74 @@ func (dc *DownstreamController) sendDeviceModelMsg(device *v1beta1.Device, opera
 		klog.Errorf("Failed to send device model addition message %v, device: %s, operation: %s, error: %v",
 			modelMsg, device.Name, operation, err)
 	}
+}
+
+// mapperDeleted delete records about node with nodeID in mapperManager
+func (dc *DownstreamController) mapperMigrated(nodeID string) error {
+	value, ok := dc.mapperManager.NodeMapperList.Load(nodeID)
+	if ok {
+		mapperlist := *(value.(*[]pb.MapperInfo))
+		for _, mapper := range mapperlist {
+			dc.mapperManager.Mapper2NodeMap.Delete(mapper.Name)
+			msg := model.NewMessage("")
+			resource, err := messagelayer.BuildResourceForDevice(nodeID, "mapper", "")
+			msg.BuildRouter("meta", constants.GroupTwin, resource, model.DeleteOperation)
+
+			msg.Content, _ = json.Marshal(mapper)
+			if err != nil {
+				klog.Warningf("Built message resource failed with error: %s", err)
+				return err
+			}
+			err = dc.messageLayer.Send(*msg)
+		}
+		dc.mapperManager.NodeMapperList.Delete(nodeID)
+	}
+	return nil
+}
+
+// deviceMigrated indicates the device to be migrated on the node with nodeID
+func (dc *DownstreamController) deviceMigrated(nodeID string) error {
+	value, ok := dc.deviceManager.NodeDeviceList.Load(nodeID)
+	if ok {
+		devicelist := *(value.(*[]string))
+		for i := 0; i < len(devicelist); i++ {
+			deviceName := devicelist[i]
+			cachedDeviceValue, _ := dc.deviceManager.DeployedDevice.Load(deviceName)
+			cachedDevice := cachedDeviceValue.(*v1beta1.Device)
+			switch cachedDevice.Spec.MigrateOnOffline {
+			case true:
+				device := cachedDevice.DeepCopy()
+				device.Status.CurrentNode = ""
+				device.Spec.NodeName = ""
+				dc.deviceUpdated(device)
+				i--
+				continue
+			case false:
+				continue
+			}
+		}
+	}
+	return nil
+}
+
+// deviceDeployed finds device whose Spec.MapperRef.Name equals to mappername,
+// deletes the device from the deviceManager.UndeployedDevice map and deploy the device to node with nodeID
+func (dc *DownstreamController) deviceDeployed(mappername string) error {
+	dc.deviceManager.UndeployedDevice.Range(func(key, value interface{}) bool {
+		device := value.(*v1beta1.Device)
+		switch device.Spec.MapperRef.Name {
+		case mappername:
+			value, ok := dc.mapperManager.Mapper2NodeMap.Load(mappername)
+			if ok {
+				nodeID := value.(string)
+				device.Spec.NodeName = nodeID
+				dc.deviceAdded(device)
+			}
+		default:
+		}
+		return true
+	})
+	return nil
 }
 
 // Start DownstreamController

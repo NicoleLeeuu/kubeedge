@@ -99,6 +99,16 @@ func ConstructConnectMessage(info *model.HubInfo, isConnected bool) *beehivemode
 	return msg
 }
 
+func ConstructDeviceMigrationMessage(info *model.HubInfo) *beehivemodel.Message {
+	body := info
+	content, _ := json.Marshal(body)
+	msg := beehivemodel.NewMessage("")
+	resource := fmt.Sprintf("%s/%s", model.ResNode, "device_migrate")
+	msg.BuildRouter(model.SrcTwin, model.GpResource, resource, model.OpMigrate)
+	msg.FillBody(content)
+	return msg
+}
+
 func DeepCopy(msg *beehivemodel.Message) *beehivemodel.Message {
 	if msg == nil {
 		return nil

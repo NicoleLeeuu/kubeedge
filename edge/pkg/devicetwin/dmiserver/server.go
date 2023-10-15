@@ -88,6 +88,13 @@ func (s *server) MapperRegister(ctx context.Context, in *pb.MapperRegisterReques
 		return &pb.MapperRegisterResponse{}, nil
 	}
 
+	target := modules.TwinGroup
+	content, _ := json.Marshal(*in.Mapper)
+
+	message := beehiveModel.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
+		"mapper", beehiveModel.InsertOperation).FillBody(content)
+	beehiveContext.SendToGroup(target, *message)
+
 	var deviceList []*pb.Device
 	var deviceModelList []*pb.DeviceModel
 	s.dmiCache.DeviceMu.Lock()
@@ -118,7 +125,7 @@ func (s *server) MapperRegister(ctx context.Context, in *pb.MapperRegisterReques
 			deviceModelList = append(deviceModelList, dm)
 		}
 	}
-	dmiclient.DMIClientsImp.CreateDMIClient(in.Mapper.Protocol, string(in.Mapper.Address))
+	dmiclient.DMIClientsImp.CreateDMIClient(in.Mapper.Protocol, in.Mapper.Name, string(in.Mapper.Address))
 
 	return &pb.MapperRegisterResponse{
 		DeviceList: deviceList,

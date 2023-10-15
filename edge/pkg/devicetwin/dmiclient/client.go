@@ -17,7 +17,12 @@ limitations under the License.
 package dmiclient
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
+	beehiveModel "github.com/kubeedge/beehive/pkg/core/model"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"net"
 	"sync"
 	"time"
@@ -34,6 +39,7 @@ import (
 
 type DMIClient struct {
 	protocol   string
+	mapperName string
 	socket     string
 	Client     dmiapi.DeviceMapperServiceClient
 	Ctx        context.Context
@@ -148,10 +154,22 @@ func (dcs *DMIClients) getDMIClientByProtocol(protocol string) (*DMIClient, erro
 	return dc, nil
 }
 
-func (dcs *DMIClients) CreateDMIClient(protocol, sockPath string) {
-	dc, err := dcs.getDMIClientByProtocol(protocol)
+func (dcs *DMIClients) getDMIClientByProtocolAndMapperName(protocol, mapperName string) (*DMIClient, error) {
+	dcs.mutex.Lock()
+	defer dcs.mutex.Unlock()
+	key := fmt.Sprintf("%s-%s", protocol, mapperName)
+	dc, ok := dcs.clients[key]
+	if !ok {
+		return nil, fmt.Errorf("fail to get dmi client of protocol %s", protocol)
+	}
+	return dc, nil
+}
+
+func (dcs *DMIClients) CreateDMIClient(protocol, mapperName, sockPath string) {
+	dc, err := dcs.getDMIClientByProtocolAndMapperName(protocol, mapperName)
 	if err == nil {
 		dcs.mutex.Lock()
+		dc.mapperName = mapperName
 		dc.protocol = protocol
 		dc.socket = sockPath
 		dcs.mutex.Unlock()
@@ -159,9 +177,11 @@ func (dcs *DMIClients) CreateDMIClient(protocol, sockPath string) {
 	}
 
 	dcs.mutex.Lock()
-	dcs.clients[protocol] = &DMIClient{
-		protocol: protocol,
-		socket:   sockPath,
+	key := fmt.Sprintf("%s-%s", protocol, mapperName)
+	dcs.clients[key] = &DMIClient{
+		mapperName: mapperName,
+		protocol:   protocol,
+		socket:     sockPath,
 	}
 	dcs.mutex.Unlock()
 }
@@ -180,9 +200,10 @@ func (dcs *DMIClients) getDMIClientConn(protocol string) (*DMIClient, error) {
 }
 
 func (dcs *DMIClients) RegisterDevice(device *v1beta1.Device) error {
+	mapperName := device.Spec.MapperRef.Name
 	protocol := device.Spec.Protocol.ProtocolName
 
-	dc, err := dcs.getDMIClientConn(protocol)
+	dc, err := dcs.getDMIClientByProtocolAndMapperName(protocol, mapperName)
 	if err != nil {
 		return err
 	}
@@ -193,10 +214,19 @@ func (dcs *DMIClients) RegisterDevice(device *v1beta1.Device) error {
 	if err != nil {
 		return fmt.Errorf("fail to create createDeviceRequest for device %s with err: %v", device.Name, err)
 	}
-	_, err = dc.Client.RegisterDevice(dc.Ctx, cdr)
+	response, err := dc.Client.RegisterDevice(dc.Ctx, cdr)
 	if err != nil {
 		return err
 	}
+
+	// msg for updating device.CurrentNode
+	topic := "device/connect_successfully"
+	target := modules.TwinGroup
+	resource := base64.URLEncoding.EncodeToString([]byte(topic))
+	content, _ := json.Marshal(response.DeviceName)
+	message := beehiveModel.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
+		resource, beehiveModel.ResponseOperation).FillBody(content)
+	beehiveContext.SendToGroup(target, *message)
 	return nil
 }
 
