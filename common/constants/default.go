@@ -112,6 +112,7 @@ const (
 	DefaultDeviceEventBuffer         = 1
 	DefaultDeviceModelEventBuffer    = 1
 	DefaultUpdateDeviceStatusWorkers = 1
+	DefaultUpdateMapperStatusWorkers = 1
 
 	// NodeUpgradeJobController
 	DefaultNodeUpgradeJobStatusBuffer = 1024

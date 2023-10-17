@@ -17,7 +17,6 @@ limitations under the License.
 package dmiclient
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
@@ -220,12 +219,10 @@ func (dcs *DMIClients) RegisterDevice(device *v1beta1.Device) error {
 	}
 
 	// msg for updating device.CurrentNode
-	topic := "device/connect_successfully"
 	target := modules.TwinGroup
-	resource := base64.URLEncoding.EncodeToString([]byte(topic))
 	content, _ := json.Marshal(response.DeviceName)
-	message := beehiveModel.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
-		resource, beehiveModel.ResponseOperation).FillBody(content)
+	message := beehiveModel.NewMessage("").BuildRouter(modules.MetaGroup, modules.UserGroup,
+		"device/connect_successfully", beehiveModel.ResponseOperation).FillBody(string(content))
 	beehiveContext.SendToGroup(target, *message)
 	return nil
 }

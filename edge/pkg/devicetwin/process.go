@@ -67,6 +67,7 @@ func (dt *DeviceTwin) distributeMsg(m interface{}) error {
 
 	if moduleName, exist := ActionModuleMap[message.Action]; exist {
 		//how to deal write channel error
+		klog.Infof(message.Action)
 		klog.Infof("Send msg to the %s module in twin", moduleName)
 		if err := dt.DTContexts.CommTo(moduleName, &message); err != nil {
 			return err
@@ -193,7 +194,11 @@ func classifyMsg(message *dttype.DTMessage) bool {
 	var identity string
 	var action string
 	msgSource := message.Msg.GetSource()
+	d, _ := json.Marshal(message.Msg)
+	fmt.Println("_______________________  ", string(d))
 	if strings.Compare(msgSource, "bus") == 0 {
+		fmt.Println("----------- bus!!!!")
+
 		idLoc := 3
 		topic := message.Msg.GetResource()
 		topicByte, err := base64.URLEncoding.DecodeString(topic)
@@ -212,14 +217,6 @@ func classifyMsg(message *dttype.DTMessage) bool {
 			} else {
 				return false
 			}
-		} else if strings.Contains(message.Msg.Router.Resource, "mapper") {
-			if message.Msg.GetOperation() == model.InsertOperation {
-				message.Msg.Router.Source = dtcommon.TwinModule
-				action = dtcommon.SendToCloud
-			}
-		} else if strings.Contains(message.Msg.Router.Resource, "device/connect_successfully") {
-			message.Msg.Router.Source = dtcommon.TwinModule
-			action = dtcommon.SendToCloud
 		} else {
 			identity = splitString[idLoc]
 			loc := strings.Index(topic, identity)
@@ -291,6 +288,15 @@ func classifyMsg(message *dttype.DTMessage) bool {
 		if strings.Contains(message.Msg.Router.Resource, "device") {
 			action = dtcommon.MetaDeviceOperation
 		} else if strings.Contains(message.Msg.Router.Resource, "mapper") {
+			fmt.Println("----------- mapper!!!!")
+			if message.Msg.GetOperation() == model.InsertOperation {
+				//message.Msg.Router.Source = dtcommon.TwinModule
+				//action = dtcommon.SendToCloud
+				action = dtcommon.MetaMapperOperation
+			}
+		} else if strings.Contains(message.Msg.Router.Resource, "device/connect_successfully") {
+			//message.Msg.Router.Source = dtcommon.TwinModule
+			//action = dtcommon.SendToCloud
 			action = dtcommon.MetaMapperOperation
 		}
 		message.Action = action

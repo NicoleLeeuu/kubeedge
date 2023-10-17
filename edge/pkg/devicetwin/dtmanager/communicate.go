@@ -90,6 +90,10 @@ func dealSendToCloud(context *dtcontext.DTContext, resource string, msg interfac
 		return nil
 	}
 	message, ok := msg.(*model.Message)
+
+	d, _ := json.Marshal(message)
+	fmt.Println("dealSendToCloud msg: ", string(d))
+
 	if !ok {
 		return errors.New("msg not Message type")
 	}

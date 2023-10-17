@@ -89,11 +89,17 @@ func (s *server) MapperRegister(ctx context.Context, in *pb.MapperRegisterReques
 	}
 
 	target := modules.TwinGroup
-	content, _ := json.Marshal(*in.Mapper)
+	content, _ := json.Marshal(in.Mapper)
+	//topic := dtcommon.DeviceETPrefix + deviceName + dtcommon.TwinETUpdateSuffix
+	//resource := base64.URLEncoding.EncodeToString([]byte(topic))
+	//// routing key will be $hw.<project_id>.events.user.bus.response.cluster.<cluster_id>.node.<node_id>.<base64_topic>
+	//message := beehiveModel.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
+	//	resource, messagepkg.OperationResponse).FillBody(string(content))
 
-	message := beehiveModel.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
-		"mapper", beehiveModel.InsertOperation).FillBody(content)
+	message := beehiveModel.NewMessage("").BuildRouter(modules.MetaGroup, modules.UserGroup,
+		"mapper", beehiveModel.InsertOperation).FillBody(string(content))
 	beehiveContext.SendToGroup(target, *message)
+	fmt.Println("send to cloud mapper")
 
 	var deviceList []*pb.Device
 	var deviceModelList []*pb.DeviceModel

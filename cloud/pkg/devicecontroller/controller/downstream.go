@@ -18,6 +18,7 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	pb "github.com/kubeedge/kubeedge/pkg/apis/dmi/v1beta1"
 	"reflect"
 	"time"
@@ -142,7 +143,7 @@ func (dc *DownstreamController) deviceAdded(device *v1beta1.Device) {
 
 		value, ok := dc.deviceManager.NodeDeviceList.Load(nodeID)
 		if ok {
-			deviceList := *(value.(*[]string))
+			deviceList := value.([]string)
 			deviceList = append(deviceList, device.Name)
 			dc.deviceManager.NodeDeviceList.Store(nodeID, &deviceList)
 		} else {
@@ -293,6 +294,7 @@ func (dc *DownstreamController) sendDeviceMsg(device *v1beta1.Device, operation 
 		klog.Errorf("Failed to send device addition message %v, device: %s, operation: %s, error: %v",
 			modelMsg, device.Name, operation, err)
 	}
+	fmt.Println("-------- send device: ", operation)
 }
 
 func (dc *DownstreamController) sendDeviceModelMsg(device *v1beta1.Device, operation string) {
@@ -449,6 +451,7 @@ func NewDownstreamController(crdInformerFactory crdinformers.SharedInformerFacto
 		kubeClient:         client.GetKubeClient(),
 		deviceManager:      deviceManager,
 		deviceModelManager: deviceModelManager,
+		mapperManager:      manager.NewMapperManager(),
 		messageLayer:       messagelayer.DeviceControllerMessageLayer(),
 	}
 	return dc, nil

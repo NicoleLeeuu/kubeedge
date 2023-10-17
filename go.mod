@@ -19,7 +19,7 @@ require (
 	github.com/golang/protobuf v1.5.2
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.4.2
-	github.com/kubeedge/beehive v0.0.0
+	github.com/kubeedge/beehive v1.13.0
 	github.com/kubeedge/viaduct v0.0.0
 	github.com/kubernetes-csi/csi-lib-utils v0.6.1
 	github.com/mattn/go-sqlite3 v1.14.14

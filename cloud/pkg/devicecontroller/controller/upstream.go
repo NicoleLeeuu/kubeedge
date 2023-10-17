@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	pb "github.com/kubeedge/kubeedge/pkg/apis/dmi/v1beta1"
 	"strconv"
 	"strings"
@@ -100,6 +101,8 @@ func (uc *UpstreamController) dispatchMessage() {
 		resourceType, err := messagelayer.GetResourceTypeForDevice(msg.GetResource())
 		if err != nil {
 			klog.Warningf("Parse message: %s resource type with error: %s", msg.GetID(), err)
+			d, _ := json.Marshal(msg)
+			fmt.Println(string(d))
 			continue
 		}
 		klog.Infof("Message: %s, resource type is: %s", msg.GetID(), resourceType)
@@ -152,11 +155,11 @@ func (uc *UpstreamController) updateDeviceStatus() {
 				if !ok {
 					klog.Warningf("Device %s does not exist in DeployedDevice map", deviceName)
 					continue
-				} else {
-					device := value.(*v1beta1.Device)
-					device.Status.CurrentNode = nodeID
-					uc.dc.deviceManager.DeployedDevice.Store(deviceName, device)
 				}
+
+				device := value.(*v1beta1.Device)
+				device.Status.CurrentNode = nodeID
+				uc.dc.deviceManager.DeployedDevice.Store(deviceName, device)
 				continue
 			}
 			msgTwin, err := uc.unmarshalDeviceStatusMessage(msg)
@@ -243,7 +246,7 @@ func (uc *UpstreamController) updateMapperStatus() {
 			klog.Info("Stop updateMapperStatus")
 			return
 		case msg := <-uc.mapperStatusChan:
-			klog.Infof("Message: %s, operation is: %s, and resource is: %s", msg.GetID(), msg.GetOperation(), msg.GetResource())
+			fmt.Printf("Message: %s, operation is: %s, and resource is: %s\n", msg.GetID(), msg.GetOperation(), msg.GetResource())
 			operation := msg.GetOperation()
 			switch operation {
 			case model.InsertOperation:
@@ -266,20 +269,27 @@ func (uc *UpstreamController) registerMapper(msg model.Message) error {
 		klog.Warning("Failed to get node id")
 		return err
 	}
-	mapperInfo := msg.Content.(pb.MapperInfo)
+
+	mapperInfo := &pb.MapperInfo{}
+	content, err := msg.GetContentData()
+	if err != nil {
+		fmt.Println(err)
+	}
+	err = json.Unmarshal(content, mapperInfo)
 	uc.dc.mapperManager.Mapper2NodeMap.Store(mapperInfo.Name, nodeID)
 
 	value, ok := uc.dc.mapperManager.NodeMapperList.Load(nodeID)
 	if ok {
-		mapperList := *(value.(*[]pb.MapperInfo))
+		mapperList := value.([]*pb.MapperInfo)
 		mapperList = append(mapperList, mapperInfo)
 		uc.dc.mapperManager.NodeMapperList.Store(nodeID, &mapperList)
-
 	} else {
-		mapperList := make([]pb.MapperInfo, 0)
+		mapperList := make([]*pb.MapperInfo, 0)
 		mapperList = append(mapperList, mapperInfo)
 		uc.dc.mapperManager.NodeMapperList.Store(nodeID, &mapperList)
 	}
+
+	fmt.Println(uc.dc.mapperManager.NodeMapperList)
 
 	err = uc.dc.deviceDeployed(mapperInfo.Name)
 	if err != nil {

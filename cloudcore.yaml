@@ -11,7 +11,7 @@ kind: CloudCore
 kubeAPIConfig:
   burst: 5000
   contentType: application/vnd.kubernetes.protobuf
-  kubeConfig: "D:/Code/kubeedge/kubeconfig"
+  kubeConfig: "/home/k8stest/.kube/config"
   master: ""
   qps: 2500
 modules:

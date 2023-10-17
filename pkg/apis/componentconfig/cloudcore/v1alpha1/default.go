@@ -96,6 +96,7 @@ func NewDefaultCloudCoreConfig() *CloudCoreConfig {
 				},
 				Load: &DeviceControllerLoad{
 					UpdateDeviceStatusWorkers: constants.DefaultUpdateDeviceStatusWorkers,
+					UpdateMapperStatusWorkers: constants.DefaultUpdateMapperStatusWorkers,
 				},
 			},
 			NodeUpgradeJobController: &NodeUpgradeJobController{

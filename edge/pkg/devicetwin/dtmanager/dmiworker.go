@@ -288,29 +288,40 @@ func (dw *DMIWorker) dealMetaMapperOperation(context *dtcontext.DTContext, resou
 	if !ok {
 		return errors.New("msg not Message type")
 	}
-	var mapper pb.MapperInfo
-	err := json.Unmarshal(message.Content.([]byte), &mapper)
-	if err != nil {
-		return fmt.Errorf("invalid message content with err: %+v", err)
-	}
-	switch message.GetOperation() {
-	//TODO 在数据库中修改mapper信息
-	case model.InsertOperation:
-		dw.dmiCache.MapperMu.Lock()
-		dw.dmiCache.MapperList[mapper.Name] = &mapper
-		dw.dmiCache.MapperMu.Unlock()
-		//TODO 在DMI中创建mapper
-	case model.DeleteOperation:
-		dw.dmiCache.MapperMu.Lock()
-		delete(dw.dmiCache.MapperList, mapper.Name)
-		dw.dmiCache.MapperMu.Unlock()
-	case model.UpdateOperation:
-		dw.dmiCache.MapperMu.Lock()
-		dw.dmiCache.MapperList[mapper.Name] = &mapper
-		dw.dmiCache.MapperMu.Unlock()
-		//TODO 在DMI中修改mapper
-	default:
-		klog.Warningf("unsupported operation %s", message.GetOperation())
-	}
+	//var mapper pb.MapperInfo
+	//err := json.Unmarshal(message.Content.([]byte), &mapper)
+	//if err != nil {
+	//	return fmt.Errorf("invalid message content with err: %+v", err)
+	//}
+
+	d, _ := json.Marshal(msg)
+	fmt.Println("dealMetaMapperOperation msg: ", string(d))
+
+	err := context.Send("",
+		dtcommon.SendToCloud,
+		dtcommon.CommModule,
+		context.BuildModelMessage("resource", "", message.GetResource(), model.InsertOperation, message.Content))
+
+	fmt.Println("-------- send to cloud, err: ", err)
+
+	//switch message.GetOperation() {
+	////TODO 在数据库中修改mapper信息
+	//case model.InsertOperation:
+	//	dw.dmiCache.MapperMu.Lock()
+	//	dw.dmiCache.MapperList[mapper.Name] = &mapper
+	//	dw.dmiCache.MapperMu.Unlock()
+	//	//TODO 在DMI中创建mapper
+	//case model.DeleteOperation:
+	//	dw.dmiCache.MapperMu.Lock()
+	//	delete(dw.dmiCache.MapperList, mapper.Name)
+	//	dw.dmiCache.MapperMu.Unlock()
+	//case model.UpdateOperation:
+	//	dw.dmiCache.MapperMu.Lock()
+	//	dw.dmiCache.MapperList[mapper.Name] = &mapper
+	//	dw.dmiCache.MapperMu.Unlock()
+	//	//TODO 在DMI中修改mapper
+	//default:
+	//	klog.Warningf("unsupported operation %s", message.GetOperation())
+	//}
 	return nil
 }
