@@ -88,17 +88,14 @@ func (s *server) MapperRegister(ctx context.Context, in *pb.MapperRegisterReques
 		return &pb.MapperRegisterResponse{}, nil
 	}
 
-	target := modules.TwinGroup
-	content, _ := json.Marshal(in.Mapper)
-	//topic := dtcommon.DeviceETPrefix + deviceName + dtcommon.TwinETUpdateSuffix
-	//resource := base64.URLEncoding.EncodeToString([]byte(topic))
-	//// routing key will be $hw.<project_id>.events.user.bus.response.cluster.<cluster_id>.node.<node_id>.<base64_topic>
-	//message := beehiveModel.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
-	//	resource, messagepkg.OperationResponse).FillBody(string(content))
-
+	content, err := json.Marshal(in.Mapper)
+	if err != nil {
+		klog.Errorf("fail to marshal mapper %s with err: %v", in.Mapper.Name, err)
+		return nil, err
+	}
 	message := beehiveModel.NewMessage("").BuildRouter(modules.MetaGroup, modules.UserGroup,
-		"mapper", beehiveModel.InsertOperation).FillBody(string(content))
-	beehiveContext.SendToGroup(target, *message)
+		"mapper/connect_successfully", beehiveModel.InsertOperation).FillBody(string(content))
+	beehiveContext.SendToGroup(modules.TwinGroup, *message)
 	fmt.Println("send to cloud mapper")
 
 	var deviceList []*pb.Device
@@ -106,9 +103,10 @@ func (s *server) MapperRegister(ctx context.Context, in *pb.MapperRegisterReques
 	s.dmiCache.DeviceMu.Lock()
 	defer s.dmiCache.DeviceMu.Unlock()
 	for _, device := range s.dmiCache.DeviceList {
+		mapperName := device.Spec.MapperRef.Name
 		protocol := device.Spec.Protocol.ProtocolName
 
-		if protocol == in.Mapper.Protocol {
+		if protocol == in.Mapper.Protocol && mapperName == in.Mapper.Name {
 			dev, err := dtcommon.ConvertDevice(device)
 			if err != nil {
 				klog.Errorf("fail to convert device %s with err: %v", device.Name, err)

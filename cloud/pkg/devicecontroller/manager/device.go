@@ -24,7 +24,7 @@ type DeviceManager struct {
 	// UndeployedDevice stores the undeployed devices, key is device.Name, value is *v1beta1.Device{}
 	UndeployedDevice sync.Map
 
-	// NodeDeviceList stores the device list deployed on the corresponding node, key is node.Name, value is *[]string{}
+	// NodeDeviceList stores the device list deployed on the corresponding node, key is node.Name, value is []*v1beta1.Device{}
 	NodeDeviceList sync.Map
 }
 

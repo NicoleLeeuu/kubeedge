@@ -6,6 +6,7 @@ const (
 	ResourceTypeMembershipDetail = "membership/detail"
 	ResourceTypeDeviceMigrate    = "device/migrate"
 	ResourceTypeDeviceConnected  = "device/connect_successfully"
+	ResourceTypeMapperConnected  = "mapper/connect_successfully"
 
 	// Group
 	GroupTwin     = "twin"

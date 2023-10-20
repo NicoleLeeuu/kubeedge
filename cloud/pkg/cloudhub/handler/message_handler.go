@@ -141,6 +141,7 @@ func (mh *messageHandler) HandleConnection(connection conn.Connection) {
 		// clean node message pool and session
 		mh.MessageDispatcher.DeleteNodeMessagePool(nodeInfo.NodeID, nodeMessagePool)
 		mh.SessionManager.DeleteSession(nodeSession)
+		// when node becomes disconnected, notify device migration
 		mh.OnNotifyDeviceMigration(nodeInfo)
 		mh.OnEdgeNodeDisconnect(nodeInfo, connection)
 	}()

@@ -10,7 +10,7 @@ type MapperManager struct {
 	// TODO mapper.Name在多个节点上可能重复
 	Mapper2NodeMap sync.Map
 
-	// NodeMapperList stores the mapper list deployed on the corresponding node, key is node.Name, value is *[]v1beta1.MapperInfo{}
+	// NodeMapperList stores the mapper list deployed on the corresponding node, key is node.Name, value is []*v1beta1.MapperInfo{}
 	NodeMapperList sync.Map
 }
 

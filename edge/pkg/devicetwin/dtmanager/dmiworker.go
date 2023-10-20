@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"strings"
 	"sync"
 
@@ -135,6 +136,7 @@ func (dw *DMIWorker) dealMetaDeviceOperation(context *dtcontext.DTContext, resou
 			delete(dw.dmiCache.MapperList, mapper.Name)
 			dw.dmiCache.MapperMu.Unlock()
 		}
+		return nil
 	}
 	resources := strings.Split(message.Router.Resource, "/")
 	if len(resources) != 3 {
@@ -142,7 +144,7 @@ func (dw *DMIWorker) dealMetaDeviceOperation(context *dtcontext.DTContext, resou
 	}
 	var device v1beta1.Device
 	var dm v1beta1.DeviceModel
-	switch resources[1] {
+	switch resources[2] {
 	case constants.ResourceTypeDevice:
 		err := json.Unmarshal(message.Content.([]byte), &device)
 		if err != nil {
@@ -293,16 +295,10 @@ func (dw *DMIWorker) dealMetaMapperOperation(context *dtcontext.DTContext, resou
 	//if err != nil {
 	//	return fmt.Errorf("invalid message content with err: %+v", err)
 	//}
-
-	d, _ := json.Marshal(msg)
-	fmt.Println("dealMetaMapperOperation msg: ", string(d))
-
-	err := context.Send("",
-		dtcommon.SendToCloud,
-		dtcommon.CommModule,
-		context.BuildModelMessage("resource", "", message.GetResource(), model.InsertOperation, message.Content))
-
-	fmt.Println("-------- send to cloud, err: ", err)
+	message.Router.Source = dtcommon.TwinModule
+	message.Router.Operation = dtcommon.SendToCloud
+	beehiveContext.Send(dtcommon.CommModule, *message)
+	fmt.Println("-------- send to cloud ")
 
 	//switch message.GetOperation() {
 	////TODO 在数据库中修改mapper信息

@@ -108,11 +108,9 @@ func (uc *UpstreamController) dispatchMessage() {
 		klog.Infof("Message: %s, resource type is: %s", msg.GetID(), resourceType)
 
 		switch resourceType {
-		case constants.ResourceTypeDeviceConnected:
-		case constants.ResourceTypeDeviceMigrate:
-		case constants.ResourceTypeTwinEdgeUpdated:
+		case constants.ResourceTypeDeviceConnected, constants.ResourceTypeDeviceMigrate, constants.ResourceTypeTwinEdgeUpdated:
 			uc.deviceStatusChan <- msg
-		case constants.ResourceTypeMapper:
+		case constants.ResourceTypeMapperConnected:
 			uc.mapperStatusChan <- msg
 		case constants.ResourceTypeMembershipDetail:
 		default:
@@ -131,33 +129,41 @@ func (uc *UpstreamController) updateDeviceStatus() {
 			klog.Infof("Message: %s, operation is: %s, and resource is: %s", msg.GetID(), msg.GetOperation(), msg.GetResource())
 			resource := msg.GetResource()
 			if strings.Contains(resource, constants.ResourceTypeDeviceMigrate) {
-				hubInfo := msg.GetContent().(commonmodel.HubInfo)
+				// handle device migrate
+				hubInfo := commonmodel.HubInfo{}
+				err := json.Unmarshal(msg.Content.([]byte), &hubInfo)
+				if err != nil {
+					klog.Warningf("Failed to unmarshal hub info with error %v", err)
+					continue
+				}
 				nodeID := hubInfo.NodeID
-				err := uc.dc.mapperMigrated(nodeID)
+				// delete mapper record in node
+				err = uc.dc.mapperMigrated(nodeID)
 				if err != nil {
 					klog.Warningf("Failed to delete mapper record about node %s", nodeID)
 				}
+				// delete device which needs to be migrated when node becomes offline
 				err = uc.dc.deviceMigrated(nodeID)
 				if err != nil {
 					klog.Warningf("Failed to migrate devices on node %s", nodeID)
 				}
 				continue
 			} else if strings.Contains(resource, constants.ResourceTypeDeviceConnected) {
-				hubInfo := msg.GetContent().(commonmodel.HubInfo)
-				nodeID := hubInfo.NodeID
-				var deviceName string
-				err := json.Unmarshal(msg.Content.([]byte), &deviceName)
+				// node/nodeID/device/connect_successfully
+				nodeID, err := messagelayer.GetNodeID(msg)
 				if err != nil {
-					klog.Warningf("Failed to unmarshal device name with error %v", err)
+					klog.Warningf("Message: %s process failure, get node id failed with error: %s", msg.GetID(), err)
 					continue
 				}
+				deviceName := msg.GetContent()
+				fmt.Println("deviceName: ", deviceName)
 				value, ok := uc.dc.deviceManager.DeployedDevice.Load(deviceName)
 				if !ok {
 					klog.Warningf("Device %s does not exist in DeployedDevice map", deviceName)
 					continue
 				}
-
 				device := value.(*v1beta1.Device)
+				// update device status
 				device.Status.CurrentNode = nodeID
 				uc.dc.deviceManager.DeployedDevice.Store(deviceName, device)
 				continue
@@ -247,16 +253,14 @@ func (uc *UpstreamController) updateMapperStatus() {
 			return
 		case msg := <-uc.mapperStatusChan:
 			fmt.Printf("Message: %s, operation is: %s, and resource is: %s\n", msg.GetID(), msg.GetOperation(), msg.GetResource())
-			operation := msg.GetOperation()
-			switch operation {
-			case model.InsertOperation:
+			if strings.Contains(msg.GetResource(), constants.ResourceTypeMapperConnected) {
+				// node/nodeID/mapper/connect_successfully
+				// when mapper is connected successfully, register mapper and deploy device corresponding to mapper
 				err := uc.registerMapper(msg)
 				if err != nil {
 					klog.Warningf("Mapper registration failed due to error %v", err)
 					continue
 				}
-			default:
-				klog.Info("Unsupported operation")
 			}
 		}
 	}
@@ -270,26 +274,36 @@ func (uc *UpstreamController) registerMapper(msg model.Message) error {
 		return err
 	}
 
-	mapperInfo := &pb.MapperInfo{}
+	// get mapper info from message content
+	mapperInfo := pb.MapperInfo{}
 	content, err := msg.GetContentData()
 	if err != nil {
-		fmt.Println(err)
+		return err
 	}
-	err = json.Unmarshal(content, mapperInfo)
+	err = json.Unmarshal(content, &mapperInfo)
+	if err != nil {
+		return err
+	}
 	uc.dc.mapperManager.Mapper2NodeMap.Store(mapperInfo.Name, nodeID)
 
 	value, ok := uc.dc.mapperManager.NodeMapperList.Load(nodeID)
+	// store mapper info in NodeMapperList
 	if ok {
 		mapperList := value.([]*pb.MapperInfo)
-		mapperList = append(mapperList, mapperInfo)
-		uc.dc.mapperManager.NodeMapperList.Store(nodeID, &mapperList)
+		mapperList = append(mapperList, &mapperInfo)
+		uc.dc.mapperManager.NodeMapperList.Store(nodeID, mapperList)
 	} else {
 		mapperList := make([]*pb.MapperInfo, 0)
-		mapperList = append(mapperList, mapperInfo)
-		uc.dc.mapperManager.NodeMapperList.Store(nodeID, &mapperList)
+		mapperList = append(mapperList, &mapperInfo)
+		uc.dc.mapperManager.NodeMapperList.Store(nodeID, mapperList)
 	}
 
 	fmt.Println(uc.dc.mapperManager.NodeMapperList)
+
+	uc.dc.mapperManager.NodeMapperList.Range(func(key, value any) bool {
+		fmt.Println(key, value)
+		return ok
+	})
 
 	err = uc.dc.deviceDeployed(mapperInfo.Name)
 	if err != nil {

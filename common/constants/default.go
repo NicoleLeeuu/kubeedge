@@ -109,6 +109,7 @@ const (
 
 	// DeviceController
 	DefaultUpdateDeviceStatusBuffer  = 1024
+	DefaultUpdateMapperStatusBuffer  = 1024
 	DefaultDeviceEventBuffer         = 1
 	DefaultDeviceModelEventBuffer    = 1
 	DefaultUpdateDeviceStatusWorkers = 1

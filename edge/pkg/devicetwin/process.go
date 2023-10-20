@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/constants"
 	"strings"
 	"sync"
 	"time"
@@ -275,28 +276,24 @@ func classifyMsg(message *dttype.DTMessage) bool {
 		}
 		return false
 	} else if strings.Compare(msgSource, "meta") == 0 {
-		switch message.Msg.Content.(type) {
-		case []byte:
-			klog.Info("Message content type is []byte, no need to marshal again")
-		default:
-			content, err := json.Marshal(message.Msg.Content)
-			if err != nil {
-				return false
-			}
-			message.Msg.Content = content
-		}
 		if strings.Contains(message.Msg.Router.Resource, "device") {
+			if message.Msg.Router.Resource == constants.ResourceTypeDeviceConnected {
+				message.Msg.Router.Source = constants.GroupTwin
+				message.Action = dtcommon.SendToCloud
+				return true
+			}
+			switch message.Msg.Content.(type) {
+			case []byte:
+				klog.Info("Message content type is []byte, no need to marshal again")
+			default:
+				content, err := json.Marshal(message.Msg.Content)
+				if err != nil {
+					return false
+				}
+				message.Msg.Content = content
+			}
 			action = dtcommon.MetaDeviceOperation
 		} else if strings.Contains(message.Msg.Router.Resource, "mapper") {
-			fmt.Println("----------- mapper!!!!")
-			if message.Msg.GetOperation() == model.InsertOperation {
-				//message.Msg.Router.Source = dtcommon.TwinModule
-				//action = dtcommon.SendToCloud
-				action = dtcommon.MetaMapperOperation
-			}
-		} else if strings.Contains(message.Msg.Router.Resource, "device/connect_successfully") {
-			//message.Msg.Router.Source = dtcommon.TwinModule
-			//action = dtcommon.SendToCloud
 			action = dtcommon.MetaMapperOperation
 		}
 		message.Action = action
